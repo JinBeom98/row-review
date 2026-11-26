@@ -1,0 +1,827 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>상품 행 검수</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+:root{
+  --bg:#f4f5f7;--panel:#fff;--panel2:#f8f9fb;--text:#1d2129;--muted:#6b7280;--line:#e3e6eb;
+  --accent:#2f6fed;--accent-weak:#e8f0fe;
+  --ok:#14804a;--ok-weak:#e3f5ea;--err:#c62828;--err-weak:#fdecec;--warn:#b26a00;--warn-weak:#fff4e0;
+  --hold:#6b4fbb;--hold-weak:#efeafb;--mark:#e8590c;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#14161a;--panel:#1d2025;--panel2:#23272d;--text:#e7e9ec;--muted:#9aa1ab;--line:#30353d;
+  --accent:#6b9bff;--accent-weak:#1e2a44;
+  --ok:#4cc38a;--ok-weak:#16301f;--err:#ff6b6b;--err-weak:#3a1c1c;--warn:#f0b44c;--warn-weak:#3a2c12;
+  --hold:#b39dff;--hold-weak:#2a2342;--mark:#ff922b;
+}}
+:root[data-theme="dark"]{
+  --bg:#14161a;--panel:#1d2025;--panel2:#23272d;--text:#e7e9ec;--muted:#9aa1ab;--line:#30353d;
+  --accent:#6b9bff;--accent-weak:#1e2a44;
+  --ok:#4cc38a;--ok-weak:#16301f;--err:#ff6b6b;--err-weak:#3a1c1c;--warn:#f0b44c;--warn-weak:#3a2c12;
+  --hold:#b39dff;--hold-weak:#2a2342;--mark:#ff922b;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font:14px/1.5 "Pretendard","Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif}
+button,select,input,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:6px 12px}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn:disabled{opacity:.45;cursor:default}
+select,input[type=text],input[type=number],textarea{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+kbd{font:12px ui-monospace,Consolas,monospace;border:1px solid var(--line);border-bottom-width:2px;border-radius:4px;padding:0 5px;background:var(--panel2)}
+
+/* 상단 바 */
+header{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+header h1{font-size:16px;margin:0 8px 0 0;white-space:nowrap}
+.fname{color:var(--muted);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.progress{display:flex;align-items:center;gap:8px;margin-left:auto;white-space:nowrap}
+.bar{width:140px;height:8px;border-radius:4px;background:var(--line);overflow:hidden;display:flex}
+.bar i{display:block;height:100%}
+
+/* 레이아웃 */
+.layout{display:grid;grid-template-columns:270px minmax(0,1fr) 300px;height:calc(100vh - 57px)}
+aside,main,.side{overflow:auto}
+aside{border-right:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column}
+.side{border-left:1px solid var(--line);background:var(--panel);padding:16px}
+main{padding:20px 24px 40px}
+
+/* 목록 */
+.filters{padding:10px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--line)}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:2px 9px;font-size:12px}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+#list{list-style:none;margin:0;padding:0;overflow:auto;flex:1}
+#list li{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);cursor:pointer}
+#list li:hover{background:var(--panel2)}
+#list li.cur{background:var(--accent-weak);box-shadow:inset 3px 0 0 var(--accent)}
+#list .rn{color:var(--muted);font-size:12px;min-width:38px}
+#list .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st{font-size:11px;border-radius:4px;padding:0 5px;white-space:nowrap}
+.st.ok{background:var(--ok-weak);color:var(--ok)}.st.issue{background:var(--err-weak);color:var(--err)}.st.hold{background:var(--hold-weak);color:var(--hold)}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}
+.dot.err{background:var(--err)}.dot.warn{background:var(--warn)}.dot.none{background:transparent}
+
+/* 빈 화면 */
+.drop{max-width:640px;margin:8vh auto;border:2px dashed var(--line);border-radius:16px;padding:48px 24px;text-align:center;background:var(--panel)}
+.drop.over{border-color:var(--accent);background:var(--accent-weak)}
+.drop h2{margin:0 0 8px}
+.drop p{color:var(--muted);margin:4px 0}
+
+/* 행 카드 */
+.rowhead{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+.rowhead .meta{color:var(--muted);font-size:13px}
+.rowhead h2{margin:2px 0 0;font-size:26px;line-height:1.25;word-break:break-all}
+.rowhead .code{font:600 15px ui-monospace,Consolas,monospace;color:var(--muted)}
+.nav{margin-left:auto;display:flex;gap:6px;align-items:center}
+.nav input{width:72px;text-align:center}
+.status-big{font-size:13px;font-weight:600;border-radius:6px;padding:3px 10px}
+.issues{border-radius:12px;padding:12px 14px;margin-bottom:14px;border:1px solid}
+.issues.err{background:var(--err-weak);border-color:var(--err)}
+.issues.warn{background:var(--warn-weak);border-color:var(--warn)}
+.issues.clean{background:var(--ok-weak);border-color:var(--ok);color:var(--ok);font-weight:600}
+.issues ul{margin:0;padding-left:18px}
+.issues li.e{color:var(--err)}.issues li.w{color:var(--warn)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+.card h3{margin:0 0 12px;font-size:13px;color:var(--muted);font-weight:600;letter-spacing:.02em}
+.top{display:grid;grid-template-columns:minmax(0,300px) minmax(0,1fr);gap:14px}
+.gallery{display:flex;flex-wrap:wrap;gap:8px}
+.gallery figure{margin:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--panel2);cursor:zoom-in}
+.gallery figure.main{width:100%}
+.gallery figure.sub{width:86px}
+.gallery img{display:block;width:100%;aspect-ratio:1;object-fit:contain;background:var(--panel2)}
+.gallery figcaption{font-size:11px;color:var(--muted);padding:2px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.noimg{height:200px;display:flex;align-items:center;justify-content:center;color:var(--muted);border:1px dashed var(--line);border-radius:10px;width:100%}
+.prices{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.ptile{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--panel2)}
+.ptile .l{font-size:13px;color:var(--muted)}
+.ptile .v{font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.2;word-break:break-all}
+.ptile .s{font-size:12px;color:var(--muted)}
+.ptile.bad{border-color:var(--err);background:var(--err-weak)}.ptile.bad .v{color:var(--err)}
+.ptile.wn{border-color:var(--warn);background:var(--warn-weak)}
+.derived{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:10px}
+.derived .ptile .v{font-size:20px}
+.fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:8px}
+.field{border:1px solid var(--line);border-radius:10px;padding:8px 12px;cursor:pointer;position:relative;background:var(--panel)}
+.field:hover{border-color:var(--accent)}
+.field .k{font-size:12px;color:var(--muted);display:flex;gap:6px;align-items:center}
+.field .k b{font-weight:600;color:var(--text)}
+.field .k .col{font:11px ui-monospace,Consolas,monospace;opacity:.7}
+.field .v{font-size:17px;word-break:break-all;white-space:pre-wrap;min-height:1.5em}
+.field .v.empty{color:var(--muted);font-style:italic;font-size:14px}
+.field .v img{height:64px;width:64px;object-fit:contain;border:1px solid var(--line);border-radius:6px;margin-right:4px;background:var(--panel2)}
+.field .msg{font-size:12px;margin-top:2px}
+.field.e{border-color:var(--err);background:var(--err-weak)}.field.e .msg{color:var(--err)}
+.field.w{border-color:var(--warn);background:var(--warn-weak)}.field.w .msg{color:var(--warn)}
+.field.marked{outline:3px solid var(--mark);outline-offset:-1px}
+.field.marked::after{content:"표시됨";position:absolute;top:6px;right:8px;font-size:11px;color:#fff;background:var(--mark);border-radius:4px;padding:0 5px}
+.field.role{box-shadow:inset 3px 0 0 var(--accent)}
+.hint{color:var(--muted);font-size:12px}
+
+/* 오른쪽 판정 패널 */
+.side h3{margin:0 0 10px;font-size:13px;color:var(--muted)}
+.judge{display:grid;gap:8px;margin-bottom:16px}
+.judge button{display:flex;justify-content:space-between;align-items:center;border:2px solid var(--line);background:var(--panel);border-radius:10px;padding:12px 14px;font-size:16px;font-weight:600}
+.judge button.ok.on{background:var(--ok-weak);border-color:var(--ok);color:var(--ok)}
+.judge button.issue.on{background:var(--err-weak);border-color:var(--err);color:var(--err)}
+.judge button.hold.on{background:var(--hold-weak);border-color:var(--hold);color:var(--hold)}
+.side textarea{width:100%;min-height:120px;resize:vertical}
+.side label.chk{display:flex;gap:6px;align-items:center;margin:8px 0;font-size:13px}
+.marks{margin:8px 0 16px;padding:0;list-style:none}
+.marks li{font-size:13px;padding:3px 8px;border-radius:6px;background:var(--panel2);margin-bottom:4px;display:flex;justify-content:space-between}
+.marks li button{border:0;background:none;color:var(--muted)}
+.keys{font-size:12px;color:var(--muted);line-height:2}
+.sep{border:0;border-top:1px solid var(--line);margin:16px 0}
+
+/* 설정 / 라이트박스 */
+dialog{border:1px solid var(--line);border-radius:14px;background:var(--panel);color:var(--text);padding:0;width:min(760px,calc(100vw - 32px));max-height:calc(100vh - 48px)}
+dialog::backdrop{background:rgba(0,0,0,.45)}
+.dlg-h{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--line)}
+.dlg-h h2{margin:0;font-size:17px}
+.dlg-b{padding:16px 18px;overflow:auto;max-height:calc(100vh - 170px)}
+.dlg-f{padding:12px 18px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:8px}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 16px}
+.grid2 label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.rules label{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.rules input[type=number]{width:70px}
+.reqs{display:flex;flex-wrap:wrap;gap:6px}
+.reqs label{border:1px solid var(--line);border-radius:6px;padding:2px 8px;font-size:13px;display:flex;gap:4px;align-items:center}
+#lightbox{position:fixed;inset:0;background:rgba(0,0,0,.8);display:none;align-items:center;justify-content:center;z-index:50;cursor:zoom-out}
+#lightbox.on{display:flex}
+#lightbox img{max-width:92vw;max-height:92vh;background:#fff;border-radius:8px}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:8px 16px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60}
+.toast.on{opacity:1}
+.hidden{display:none!important}
+
+@media (max-width:1100px){
+  .layout{grid-template-columns:220px minmax(0,1fr);height:auto}
+  .side{grid-column:1/-1;border-left:0;border-top:1px solid var(--line)}
+}
+@media (max-width:720px){
+  .layout{grid-template-columns:1fr}
+  aside{max-height:260px;border-right:0;border-bottom:1px solid var(--line)}
+  main{padding:16px}
+  .top{grid-template-columns:1fr}
+  .prices,.derived{grid-template-columns:1fr 1fr}
+  .grid2{grid-template-columns:1fr}
+  .progress{margin-left:0}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>상품 행 검수</h1>
+  <label class="btn primary" for="file">엑셀 열기</label>
+  <input id="file" type="file" accept=".xlsx,.xlsm,.xls,.csv" class="hidden">
+  <span class="fname" id="fname"></span>
+  <select id="sheet" class="hidden" title="시트 선택"></select>
+  <button class="btn" id="btnSettings" disabled>열 매핑 · 검증 규칙</button>
+  <button class="btn" id="btnExport" disabled>검수 결과 내보내기</button>
+  <div class="progress" id="progress"></div>
+</header>
+
+<div class="layout">
+  <aside>
+    <div class="filters">
+      <input type="text" id="q" placeholder="검색 (상품명·코드·모든 값)">
+      <div class="chips" id="chips"></div>
+    </div>
+    <ul id="list"></ul>
+  </aside>
+
+  <main id="main">
+    <div class="drop" id="drop">
+      <h2>엑셀 파일을 여기로 끌어다 놓으세요</h2>
+      <p>또는 상단의 <b>엑셀 열기</b>를 누르세요. (.xlsx / .xls / .csv, 파일 1개)</p>
+      <p>첫 행을 헤더로 읽고, 2행부터 한 행씩 검수합니다.</p>
+      <p>파일은 이 브라우저 안에서만 읽으며 어디로도 전송되지 않습니다.</p>
+    </div>
+    <div id="view" class="hidden"></div>
+  </main>
+
+  <div class="side" id="side">
+    <h3>검수 판정</h3>
+    <div class="judge">
+      <button class="ok" data-s="ok">정상 <kbd>1</kbd></button>
+      <button class="issue" data-s="issue">이슈 <kbd>2</kbd></button>
+      <button class="hold" data-s="hold">보류 <kbd>3</kbd></button>
+    </div>
+    <label class="chk"><input type="checkbox" id="autoNext" checked> 판정 후 다음 행으로 이동</label>
+    <h3>메모</h3>
+    <textarea id="memo" placeholder="이 행에 대한 검토 의견"></textarea>
+    <h3 style="margin-top:14px">표시한 항목 <span class="hint">(값을 클릭해 표시/해제)</span></h3>
+    <ul class="marks" id="marks"></ul>
+    <hr class="sep">
+    <div class="keys">
+      <kbd>←</kbd> <kbd>→</kbd> 이전 / 다음 행<br>
+      <kbd>1</kbd> 정상 <kbd>2</kbd> 이슈 <kbd>3</kbd> 보류 <kbd>0</kbd> 판정 해제<br>
+      <kbd>N</kbd> 다음 미검수 행 <kbd>M</kbd> 메모 입력<br>
+      <kbd>/</kbd> 검색 <kbd>Esc</kbd> 입력 빠져나오기
+    </div>
+  </div>
+</div>
+
+<dialog id="dlg">
+  <div class="dlg-h"><h2>열 매핑 · 검증 규칙</h2><button class="btn" data-close>닫기</button></div>
+  <div class="dlg-b">
+    <h3 style="margin-top:0">열 매핑</h3>
+    <p class="hint">열 이름으로 자동 지정했습니다. 다르면 직접 고르세요.</p>
+    <div class="grid2" id="mapGrid"></div>
+    <h3>검증 규칙</h3>
+    <div class="rules" id="rulesBox"></div>
+    <h3>필수 입력 열</h3>
+    <p class="hint">체크한 열이 비어 있으면 오류로 표시합니다.</p>
+    <div class="reqs" id="reqBox"></div>
+  </div>
+  <div class="dlg-f"><button class="btn" id="btnReset">기본값으로</button><button class="btn primary" data-close>적용</button></div>
+</dialog>
+
+<div id="lightbox"><img alt=""></div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt = n => (n == null || Number.isNaN(n)) ? "-" : n.toLocaleString("ko-KR", {maximumFractionDigits: 2});
+const IMG_KW = /이미지|image|img|썸네일|사진|thumbnail/i;
+
+const ROLES = [
+  {key:"code",    label:"상품코드",     kw:["상품코드","상품번호","품번","sku","코드"]},
+  {key:"name",    label:"상품명",       kw:["상품명","품명","제품명","productname","name"]},
+  {key:"cost",    label:"단가",         kw:["단가","공급가","원가","매입가","입고가"], price:true},
+  {key:"regular", label:"상시가",       kw:["상시가","정상가","정가","판매가","소비자가"], price:true},
+  {key:"sale",    label:"할인가",       kw:["할인가","행사가","특가","프로모션가","혜택가"], price:true},
+  {key:"rate",    label:"할인율(기재값)", kw:["할인율","할인률"]},
+];
+const DEFAULT_RULES = {
+  priceInvalid:true, nonPositive:true, saleGtRegular:true, saleEqRegular:true,
+  costGtSale:true, rateRange:true, rateMin:0, rateMax:70, rateMismatch:true, rateTol:1,
+  required:true, needImage:true,
+};
+const RULE_DEFS = [
+  ["priceInvalid",  "가격 값이 비어 있거나 숫자가 아니면 오류"],
+  ["nonPositive",   "가격이 0 이하이면 오류"],
+  ["saleGtRegular", "할인가 > 상시가 이면 오류"],
+  ["saleEqRegular", "할인가 = 상시가 (할인 없음)이면 경고"],
+  ["costGtSale",    "단가 > 할인가 (역마진)이면 오류. 할인가가 없으면 상시가와 비교"],
+  ["rateRange",     "계산 할인율이 범위를 벗어나면 경고", [["rateMin","최소 %"],["rateMax","최대 %"]]],
+  ["rateMismatch",  "기재 할인율과 계산 할인율 차이가 허용치보다 크면 오류", [["rateTol","허용 %p"]]],
+  ["required",      "필수 입력 열이 비어 있으면 오류"],
+  ["needImage",     "상품 이미지(삽입 그림 또는 이미지 URL)가 없으면 경고"],
+];
+const STATUS = {ok:"정상", issue:"이슈", hold:"보류"};
+
+const S = {
+  file:null, wb:null, imgs:{}, sheet:null,
+  headers:[], rows:[], startCol:0,
+  map:{}, rules:{...DEFAULT_RULES}, required:[],
+  review:{}, checks:[], cur:0, view:[], filter:"all", q:"",
+};
+
+/* ---------- 파일 읽기 ---------- */
+$("#file").addEventListener("change", e => { const f = e.target.files[0]; if (f) loadFile(f); e.target.value = ""; });
+const drop = $("#drop");
+["dragenter","dragover"].forEach(t => document.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(t => document.addEventListener(t, e => { e.preventDefault(); if (t === "drop" || e.target === drop) drop.classList.remove("over"); }));
+document.addEventListener("drop", e => { const f = e.dataTransfer?.files?.[0]; if (f) loadFile(f); });
+
+async function loadFile(file) {
+  if (typeof XLSX === "undefined") { alert("엑셀 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인하세요."); return; }
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, {type:"array", cellDates:true});
+    for (const u of Object.values(S.imgs).flatMap(o => Object.values(o)).flat()) URL.revokeObjectURL(u.url);
+    S.file = file; S.wb = wb; S.imgs = {};
+    if (/\.(xlsx|xlsm)$/i.test(file.name) && typeof JSZip !== "undefined") {
+      try { S.imgs = await extractImages(buf); } catch (err) { console.warn("이미지 추출 실패", err); }
+    }
+    $("#fname").textContent = file.name; $("#fname").title = file.name;
+    const sel = $("#sheet");
+    sel.innerHTML = wb.SheetNames.map(n => `<option>${esc(n)}</option>`).join("");
+    sel.classList.toggle("hidden", wb.SheetNames.length < 2);
+    selectSheet(wb.SheetNames[0]);
+  } catch (err) {
+    console.error(err); alert("파일을 읽지 못했습니다: " + err.message);
+  }
+}
+$("#sheet").addEventListener("change", e => selectSheet(e.target.value));
+
+function selectSheet(name) {
+  const ws = S.wb.Sheets[name];
+  S.sheet = name;
+  if (!ws || !ws["!ref"]) { S.headers = []; S.rows = []; render(); toast("빈 시트입니다"); return; }
+  const range = XLSX.utils.decode_range(ws["!ref"]);
+  S.startCol = range.s.c;
+  const raw = XLSX.utils.sheet_to_json(ws, {header:1, raw:true, defval:"", blankrows:true});
+  const txt = XLSX.utils.sheet_to_json(ws, {header:1, raw:false, defval:"", blankrows:true});
+  const width = Math.max(0, ...raw.map(r => r.length));
+  const imgMap = S.imgs[name] || {};
+  S.headers = Array.from({length:width}, (_, c) => {
+    const h = String(raw[0]?.[c] ?? "").trim();
+    return h || `(${XLSX.utils.encode_col(range.s.c + c)}열)`;
+  });
+  S.rows = [];
+  for (let i = 1; i < raw.length; i++) {
+    const sheetRow = range.s.r + i;                   // 0-based 시트 행
+    const imgs = (imgMap[sheetRow] || []).map(m => ({...m, c: m.col - range.s.c}));
+    const r = raw[i] || [], t = txt[i] || [];
+    if (!imgs.length && r.every(v => v === "" || v == null)) continue;
+    S.rows.push({excelRow: sheetRow + 1, raw: r, txt: t, imgs});
+  }
+  loadConfig(); loadReview();
+  S.cur = 0; S.filter = "all"; S.q = ""; $("#q").value = "";
+  revalidate();
+  $("#btnSettings").disabled = $("#btnExport").disabled = false;
+  render();
+}
+
+/* ---------- 삽입 이미지 추출 (xlsx 내부 drawing / 셀 내 그림) ---------- */
+async function extractImages(buf) {
+  const zip = await JSZip.loadAsync(buf);
+  const P = new DOMParser();
+  const xml = async p => { const f = zip.file(p); return f ? P.parseFromString(await f.async("string"), "application/xml") : null; };
+  const resolve = (dir, t) => {
+    if (t.startsWith("/")) return t.slice(1);
+    const parts = dir ? dir.split("/") : [];
+    for (const seg of t.split("/")) { if (seg === "..") parts.pop(); else if (seg !== ".") parts.push(seg); }
+    return parts.join("/");
+  };
+  const rels = async p => {
+    const i = p.lastIndexOf("/"), dir = p.slice(0, i);
+    const d = await xml(`${dir}/_rels/${p.slice(i + 1)}.rels`), m = {};
+    if (d) for (const r of d.getElementsByTagName("Relationship"))
+      m[r.getAttribute("Id")] = {target: resolve(dir, r.getAttribute("Target")), type: r.getAttribute("Type") || "", ext: r.getAttribute("TargetMode") === "External"};
+    return m;
+  };
+  const MIME = {png:"image/png", jpg:"image/jpeg", jpeg:"image/jpeg", gif:"image/gif", bmp:"image/bmp", webp:"image/webp", svg:"image/svg+xml", tif:"image/tiff", tiff:"image/tiff"};
+  const urlCache = {};
+  const blobUrl = async path => {
+    if (path in urlCache) return urlCache[path];
+    const f = zip.file(path), ext = path.split(".").pop().toLowerCase();
+    if (!f || !MIME[ext]) return (urlCache[path] = null);
+    return (urlCache[path] = URL.createObjectURL(new Blob([await f.async("uint8array")], {type: MIME[ext]})));
+  };
+  const NS = (el, n) => el.getElementsByTagNameNS("*", n);
+
+  // 셀 안에 배치된 그림 (Excel 365 '셀에 그림 배치') 해석 준비
+  let vmToPath = () => null;
+  if (zip.file("xl/richData/rdrichvalue.xml") && zip.file("xl/metadata.xml")) {
+    try {
+      const md = await xml("xl/metadata.xml"), rv = await xml("xl/richData/rdrichvalue.xml");
+      const st = await xml("xl/richData/rdrichvaluestructure.xml"), rvRel = await xml("xl/richData/richValueRel.xml");
+      const rvRels = await rels("xl/richData/richValueRel.xml");
+      const tIdx = [...NS(md, "metadataType")].findIndex(x => x.getAttribute("name") === "XLRICHVALUE") + 1;
+      const fm = [...NS(md, "futureMetadata")].find(f => f.getAttribute("name") === "XLRICHVALUE");
+      const fmIdx = fm ? [...NS(fm, "bk")].map(bk => +(NS(bk, "rvb")[0]?.getAttribute("i") ?? -1)) : [];
+      const vmEl = NS(md, "valueMetadata")[0];
+      const vmBk = vmEl ? [...NS(vmEl, "bk")].map(bk => { const rc = NS(bk, "rc")[0]; return rc && +rc.getAttribute("t") === tIdx ? +rc.getAttribute("v") : -1; }) : [];
+      const structs = st ? [...NS(st, "s")].map(s => [...NS(s, "k")].map(k => k.getAttribute("n"))) : [];
+      const rvs = [...NS(rv, "rv")], relEls = rvRel ? [...NS(rvRel, "rel")] : [];
+      vmToPath = vm => {
+        const k = vmBk[vm - 1]; if (k == null || k < 0) return null;
+        const r = rvs[fmIdx[k]]; if (!r) return null;
+        const pos = (structs[+r.getAttribute("s")] || []).indexOf("_rvRel:LocalImageIdentifier"); if (pos < 0) return null;
+        const v = NS(r, "v")[pos]; if (!v) return null;
+        const rid = relEls[+v.textContent]?.getAttribute("r:id");
+        return rvRels[rid]?.target || null;
+      };
+    } catch (e) { console.warn("셀 내 그림 메타데이터 해석 실패", e); }
+  }
+
+  const out = {};
+  const add = (sheet, row, col, url, src) => { if (!url) return; ((out[sheet] ||= {})[row] ||= []).push({col, url, src}); };
+  const wbx = await xml("xl/workbook.xml"), wbRels = await rels("xl/workbook.xml");
+  for (const sh of wbx.getElementsByTagName("sheet")) {
+    const name = sh.getAttribute("name");
+    const rid = sh.getAttribute("r:id") || [...sh.attributes].find(a => a.localName === "id")?.value;
+    const sp = wbRels[rid]?.target; if (!sp) continue;
+    const sRels = await rels(sp);
+    // 1) 셀 위에 떠 있는 그림 (drawing)
+    for (const r of Object.values(sRels)) {
+      if (!/\/drawing$/.test(r.type)) continue;
+      const dx = await xml(r.target); if (!dx) continue;
+      const dRels = await rels(r.target);
+      for (const tag of ["twoCellAnchor", "oneCellAnchor"]) {
+        for (const a of NS(dx, tag)) {
+          const from = NS(a, "from")[0]; if (!from) continue;
+          const row = +NS(from, "row")[0].textContent, col = +NS(from, "col")[0].textContent;
+          for (const b of NS(a, "blip")) {
+            const t = dRels[b.getAttribute("r:embed")];
+            if (t && !t.ext) add(name, row, col, await blobUrl(t.target), "삽입 그림");
+          }
+        }
+      }
+    }
+    // 2) 셀 안에 배치된 그림
+    const sx = await xml(sp);
+    if (sx) for (const c of sx.getElementsByTagName("c")) {
+      const vm = c.getAttribute("vm"); if (!vm) continue;
+      const p = vmToPath(+vm); if (!p) continue;
+      const {r, c: col} = XLSX.utils.decode_cell(c.getAttribute("r"));
+      add(name, r, col, await blobUrl(p), "셀 내 그림");
+    }
+  }
+  return out;
+}
+
+/* ---------- 설정 저장 ---------- */
+const store = {
+  get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+const cfgKey = () => "rr-cfg:" + S.headers.join("|");
+const revKey = () => `rr-rev:${S.file.name}:${S.file.size}:${S.sheet}`;
+
+function autoMap() {
+  const norm = s => String(s).toLowerCase().replace(/[\s_\-()]/g, "");
+  const taken = new Set(), map = {};
+  for (const role of ROLES) {
+    let hit = -1;
+    for (const kw of role.kw) {
+      hit = S.headers.findIndex((h, i) => !taken.has(i) && norm(h).includes(kw));
+      if (hit >= 0) break;
+    }
+    map[role.key] = hit; if (hit >= 0) taken.add(hit);
+  }
+  return map;
+}
+function loadConfig() {
+  const c = store.get(cfgKey());
+  S.map = {...autoMap(), ...(c?.map || {})};
+  S.rules = {...DEFAULT_RULES, ...(c?.rules || {})};
+  S.required = c?.required || [S.map.code, S.map.name].filter(i => i >= 0);
+}
+const saveConfig = () => store.set(cfgKey(), {map:S.map, rules:S.rules, required:S.required});
+function loadReview() { S.review = store.get(revKey()) || {}; }
+const saveReview = () => store.set(revKey(), S.review);
+const rv = row => (S.review[row.excelRow] ||= {s:"", memo:"", marks:[]});
+
+/* ---------- 검증 ---------- */
+function num(v) {
+  if (typeof v === "number") return v;
+  if (v == null || v instanceof Date) return v == null ? null : NaN;
+  const s = String(v).replace(/[,\s원₩￦]/g, "");
+  if (s === "") return null;
+  const n = Number(s); return Number.isFinite(n) ? n : NaN;
+}
+function pct(v) {  // 할인율: 0.2, 20, "20%" 모두 허용 → %
+  if (v == null || v === "") return null;
+  if (typeof v === "string" && v.trim().endsWith("%")) { const n = num(v.replace("%", "")); return n; }
+  const n = num(v); if (n == null || Number.isNaN(n)) return n;
+  return Math.abs(n) <= 1 ? n * 100 : n;
+}
+const isEmpty = v => v == null || (typeof v === "string" && v.trim() === "");
+function urlImages(row) {
+  const out = [];
+  row.raw.forEach((v, c) => {
+    if (typeof v !== "string") return;
+    const s = v.trim();
+    if (/^https?:\/\/\S+$/i.test(s) && (/\.(png|jpe?g|gif|webp|bmp|svg)(\?\S*)?$/i.test(s) || IMG_KW.test(S.headers[c])))
+      out.push({c, url:s, src:"이미지 URL"});
+  });
+  return out;
+}
+
+function validate(row) {
+  const R = S.rules, M = S.map, issues = [];
+  const push = (level, cols, msg) => issues.push({level, cols, msg});
+  const P = {};
+  for (const k of ["cost", "regular", "sale"]) {
+    const c = M[k]; if (c == null || c < 0) { P[k] = undefined; continue; }
+    const label = ROLES.find(r => r.key === k).label, v = num(row.raw[c]);
+    P[k] = v;
+    if (v == null) { if (R.priceInvalid) push("e", [c], `${label} 값이 비어 있음`); }
+    else if (Number.isNaN(v)) { if (R.priceInvalid) push("e", [c], `${label} 값이 숫자가 아님: "${row.txt[c]}"`); }
+    else if (v <= 0 && R.nonPositive) push("e", [c], `${label} 값이 0 이하 (${fmt(v)})`);
+  }
+  const ok = v => typeof v === "number" && !Number.isNaN(v) && v > 0;
+  const {cost, regular, sale} = P;
+  if (ok(sale) && ok(regular)) {
+    if (R.saleGtRegular && sale > regular) push("e", [M.sale, M.regular], `할인가(${fmt(sale)})가 상시가(${fmt(regular)})보다 큼`);
+    if (R.saleEqRegular && sale === regular) push("w", [M.sale, M.regular], "할인가와 상시가가 같음 (할인 없음)");
+  }
+  const sellPrice = ok(sale) ? sale : ok(regular) ? regular : null;
+  if (R.costGtSale && ok(cost) && sellPrice != null && cost > sellPrice)
+    push("e", [M.cost, ok(sale) ? M.sale : M.regular], `역마진: 단가(${fmt(cost)}) > ${ok(sale) ? "할인가" : "상시가"}(${fmt(sellPrice)})`);
+  const calcRate = ok(sale) && ok(regular) ? (regular - sale) / regular * 100 : null;
+  if (calcRate != null && R.rateRange && sale <= regular && (calcRate < R.rateMin || calcRate > R.rateMax))
+    push("w", [M.sale], `계산 할인율 ${fmt(calcRate)}%가 허용 범위(${R.rateMin}~${R.rateMax}%) 밖`);
+  let stated = null;
+  if (M.rate >= 0) {
+    stated = pct(row.raw[M.rate]);
+    if (R.rateMismatch && calcRate != null && typeof stated === "number" && !Number.isNaN(stated) && Math.abs(stated - calcRate) > R.rateTol)
+      push("e", [M.rate], `기재 할인율 ${fmt(stated)}% ≠ 계산 할인율 ${fmt(calcRate)}%`);
+  }
+  if (R.required) for (const c of S.required) {
+    if (c < S.headers.length && isEmpty(row.raw[c]) && !row.imgs.some(m => m.c === c)) push("e", [c], `필수 입력 '${S.headers[c]}' 누락`);
+  }
+  const urls = urlImages(row);
+  if (R.needImage && !row.imgs.length && !urls.length) push("w", [], "상품 이미지가 없음");
+  const margin = ok(cost) && sellPrice != null ? sellPrice - cost : null;
+  return {issues, P, calcRate, stated, margin, marginRate: margin != null ? margin / sellPrice * 100 : null, urls,
+          level: issues.some(i => i.level === "e") ? "err" : issues.length ? "warn" : "none"};
+}
+function revalidate() { S.checks = S.rows.map(validate); applyFilter(); }
+
+/* ---------- 필터 / 목록 ---------- */
+const FILTERS = [
+  ["all","전체"], ["todo","미검수"], ["auto","자동경고"], ["issue","이슈"], ["hold","보류"], ["ok","정상"],
+];
+function applyFilter() {
+  const q = S.q.trim().toLowerCase();
+  S.view = [];
+  S.rows.forEach((row, i) => {
+    const s = S.review[row.excelRow]?.s || "", ck = S.checks[i];
+    const f = S.filter;
+    if (f === "todo" && s) return;
+    if (f === "auto" && ck.level === "none") return;
+    if ((f === "issue" || f === "hold" || f === "ok") && s !== f) return;
+    if (q && !row.txt.some(v => String(v).toLowerCase().includes(q)) && !String(row.excelRow).includes(q)) return;
+    S.view.push(i);
+  });
+}
+function counts() {
+  const c = {all:S.rows.length, todo:0, auto:0, issue:0, hold:0, ok:0};
+  S.rows.forEach((row, i) => {
+    const s = S.review[row.excelRow]?.s;
+    if (s) c[s]++; else c.todo++;
+    if (S.checks[i].level !== "none") c.auto++;
+  });
+  return c;
+}
+function renderChips() {
+  const c = counts();
+  $("#chips").innerHTML = FILTERS.map(([k, l]) => `<button class="chip ${S.filter === k ? "on" : ""}" data-f="${k}">${l} ${c[k]}</button>`).join("");
+  const n = c.all || 1, done = c.ok + c.issue + c.hold;
+  $("#progress").innerHTML = S.rows.length ? `<span>검수 ${done} / ${c.all}</span>
+    <span class="bar"><i style="width:${c.ok / n * 100}%;background:var(--ok)"></i><i style="width:${c.issue / n * 100}%;background:var(--err)"></i><i style="width:${c.hold / n * 100}%;background:var(--hold)"></i></span>
+    <span class="hint">${Math.round(done / n * 100)}%</span>` : "";
+}
+$("#chips").addEventListener("click", e => {
+  const b = e.target.closest("[data-f]"); if (!b) return;
+  S.filter = b.dataset.f; applyFilter();
+  if (!S.view.includes(S.cur) && S.view.length) S.cur = S.view[0];
+  render();
+});
+$("#q").addEventListener("input", e => { S.q = e.target.value; applyFilter(); if (!S.view.includes(S.cur) && S.view.length) S.cur = S.view[0]; render(); });
+
+function rowTitle(i) {
+  const row = S.rows[i], n = S.map.name, c = S.map.code;
+  return (n >= 0 && row.txt[n]) || (c >= 0 && row.txt[c]) || row.txt.find(v => v) || "(빈 행)";
+}
+function renderList() {
+  const ul = $("#list");
+  ul.innerHTML = S.view.map(i => {
+    const row = S.rows[i], s = S.review[row.excelRow]?.s, lv = S.checks[i].level;
+    return `<li data-i="${i}" class="${i === S.cur ? "cur" : ""}"><span class="dot ${lv}" title="${lv === "err" ? "자동검증 오류" : lv === "warn" ? "자동검증 경고" : ""}"></span>
+      <span class="rn">${row.excelRow}행</span><span class="nm">${esc(rowTitle(i))}</span>${s ? `<span class="st ${s}">${STATUS[s]}</span>` : ""}</li>`;
+  }).join("") || `<li class="hint" style="cursor:default">조건에 맞는 행이 없습니다</li>`;
+  ul.querySelector("li.cur")?.scrollIntoView({block:"nearest"});
+}
+$("#list").addEventListener("click", e => { const li = e.target.closest("[data-i]"); if (li) go(+li.dataset.i); });
+
+/* ---------- 행 화면 ---------- */
+function cellHtml(row, c) {
+  const imgs = row.imgs.filter(m => m.c === c);
+  const t = row.txt[c];
+  let h = imgs.map(m => `<img src="${m.url}" alt="" data-zoom="${m.url}">`).join("");
+  if (!isEmpty(t) && !(imgs.length && /^#VALUE!?$/.test(String(t).trim()))) {
+    const s = String(t).trim();
+    if (/^https?:\/\/\S+$/i.test(s)) h += `<a href="${esc(s)}" target="_blank" rel="noopener">${esc(s)}</a>`;
+    else h += esc(t);
+  }
+  return h;
+}
+function render() {
+  renderChips();
+  const has = S.rows.length > 0;
+  $("#drop").classList.toggle("hidden", has);
+  $("#view").classList.toggle("hidden", !has);
+  renderList();
+  if (!has) return;
+  if (!S.view.includes(S.cur) && S.view.length) S.cur = S.view[0];
+  const i = S.cur, row = S.rows[i], ck = S.checks[i], r = rv(row), M = S.map;
+  const pos = S.view.indexOf(i);
+
+  // 열별 오류 수집
+  const colMsg = {};
+  for (const it of ck.issues) for (const c of it.cols) if (c >= 0) (colMsg[c] ||= []).push(it);
+
+  const title = M.name >= 0 && !isEmpty(row.txt[M.name]) ? esc(row.txt[M.name]) : `<span class="hint">(상품명 없음)</span>`;
+  const st = r.s ? `<span class="status-big st ${r.s}">${STATUS[r.s]}</span>` : `<span class="status-big hint">미검수</span>`;
+
+  const issuesHtml = ck.issues.length
+    ? `<div class="issues ${ck.level}"><b>자동 검증 ${ck.issues.length}건</b><ul>${ck.issues.map(x => `<li class="${x.level}">${x.level === "e" ? "오류" : "경고"} · ${esc(x.msg)}</li>`).join("")}</ul></div>`
+    : `<div class="issues clean">자동 검증 통과: 규칙 위반 없음</div>`;
+
+  // 이미지
+  const all = [...row.imgs.map(m => ({...m, cap:`${S.headers[m.c] ?? "?"} · ${m.src}`})), ...ck.urls.map(m => ({...m, cap:`${S.headers[m.c]} · URL`}))];
+  const gallery = all.length
+    ? all.map((m, k) => `<figure class="${k ? "sub" : "main"}" data-zoom="${esc(m.url)}"><img src="${esc(m.url)}" alt="" loading="lazy" onerror="this.alt='불러오기 실패';this.style.objectFit='none'"><figcaption title="${esc(m.cap)}">${esc(m.cap)}</figcaption></figure>`).join("")
+    : `<div class="noimg">이미지 없음</div>`;
+
+  // 가격 요약
+  const tile = (key) => {
+    const c = M[key], label = ROLES.find(x => x.key === key).label;
+    if (c == null || c < 0) return `<div class="ptile"><div class="l">${label}</div><div class="v hint">-</div><div class="s">열 미지정</div></div>`;
+    const v = ck.P[key], bad = (colMsg[c] || []).some(x => x.level === "e"), wn = (colMsg[c] || []).length && !bad;
+    const shown = typeof v === "number" && !Number.isNaN(v) ? fmt(v) : (isEmpty(row.txt[c]) ? "(빈 값)" : esc(row.txt[c]));
+    return `<div class="ptile ${bad ? "bad" : wn ? "wn" : ""}"><div class="l">${label}</div><div class="v">${shown}</div><div class="s">${esc(S.headers[c])} 열</div></div>`;
+  };
+  const rateBad = M.rate >= 0 && (colMsg[M.rate] || []).length;
+  const derived = `<div class="derived">
+    <div class="ptile"><div class="l">계산 할인율</div><div class="v">${ck.calcRate == null ? "-" : fmt(ck.calcRate) + "%"}</div><div class="s">(상시가 − 할인가) ÷ 상시가</div></div>
+    <div class="ptile ${rateBad ? "bad" : ""}"><div class="l">기재 할인율</div><div class="v">${M.rate < 0 ? "-" : ck.stated == null ? "(빈 값)" : Number.isNaN(ck.stated) ? esc(row.txt[M.rate]) : fmt(ck.stated) + "%"}</div><div class="s">${M.rate >= 0 ? esc(S.headers[M.rate]) + " 열" : "열 미지정"}</div></div>
+    <div class="ptile ${ck.margin != null && ck.margin < 0 ? "bad" : ""}"><div class="l">마진</div><div class="v">${ck.margin == null ? "-" : fmt(ck.margin)}</div><div class="s">${ck.marginRate == null ? "판매가 − 단가" : "마진율 " + fmt(ck.marginRate) + "%"}</div></div>
+  </div>`;
+
+  // 전체 필드
+  const roleCols = new Set(Object.values(M).filter(c => c >= 0));
+  const fields = S.headers.map((h, c) => {
+    const msgs = colMsg[c] || [], lv = msgs.some(x => x.level === "e") ? "e" : msgs.length ? "w" : "";
+    const body = cellHtml(row, c);
+    return `<div class="field ${lv} ${r.marks.includes(c) ? "marked" : ""} ${roleCols.has(c) ? "role" : ""}" data-c="${c}">
+      <div class="k"><b>${esc(h)}</b><span class="col">${XLSX.utils.encode_col(S.startCol + c)}</span></div>
+      <div class="v ${body ? "" : "empty"}">${body || "(빈 값)"}</div>
+      ${msgs.map(x => `<div class="msg">${esc(x.msg)}</div>`).join("")}</div>`;
+  }).join("");
+
+  $("#view").innerHTML = `
+    <div class="rowhead">
+      <div>
+        <div class="meta">${pos >= 0 ? `${pos + 1} / ${S.view.length}번째` : ""} · 엑셀 <b>${row.excelRow}행</b> · 시트 ${esc(S.sheet)} ${st}</div>
+        ${M.code >= 0 ? `<div class="code">${esc(row.txt[M.code])}</div>` : ""}
+        <h2>${title}</h2>
+      </div>
+      <div class="nav">
+        <button class="btn" id="prev" ${pos <= 0 ? "disabled" : ""}>← 이전</button>
+        <input type="number" id="jump" placeholder="행 번호" title="엑셀 행 번호로 이동">
+        <button class="btn" id="next" ${pos < 0 || pos >= S.view.length - 1 ? "disabled" : ""}>다음 →</button>
+      </div>
+    </div>
+    ${issuesHtml}
+    <div class="card top">
+      <div><h3>상품 이미지 (${all.length})</h3><div class="gallery">${gallery}</div></div>
+      <div><h3>가격 검증</h3><div class="prices">${tile("cost")}${tile("regular")}${tile("sale")}</div>${derived}</div>
+    </div>
+    <div class="card"><h3>전체 항목 (${S.headers.length}개 열) · <span class="hint">값을 클릭하면 '표시'됩니다. 문제 항목 체크용</span></h3><div class="fields">${fields}</div></div>`;
+
+  $("#prev").onclick = () => step(-1);
+  $("#next").onclick = () => step(1);
+  $("#jump").onkeydown = e => {
+    if (e.key !== "Enter") return;
+    const n = +e.target.value, k = S.rows.findIndex(x => x.excelRow === n);
+    if (k < 0) return toast(`${n}행은 데이터 행이 아닙니다`);
+    if (!S.view.includes(k)) { S.filter = "all"; S.q = ""; $("#q").value = ""; applyFilter(); }
+    go(k);
+  };
+  renderSide();
+}
+function renderSide() {
+  if (!S.rows.length) return;
+  const r = rv(S.rows[S.cur]);
+  document.querySelectorAll(".judge button").forEach(b => b.classList.toggle("on", b.dataset.s === r.s));
+  const memo = $("#memo"); if (document.activeElement !== memo) memo.value = r.memo || "";
+  $("#marks").innerHTML = r.marks.length
+    ? r.marks.map(c => `<li>${esc(S.headers[c])}<button data-unmark="${c}" title="해제">✕</button></li>`).join("")
+    : `<li class="hint" style="background:none;padding-left:0">없음</li>`;
+}
+
+/* ---------- 조작 ---------- */
+function go(i) { S.cur = i; render(); $("#main").scrollTop = 0; }
+function step(d) {
+  const p = S.view.indexOf(S.cur);
+  const n = p < 0 ? 0 : p + d;
+  if (n < 0 || n >= S.view.length) return toast(d > 0 ? "마지막 행입니다" : "첫 행입니다");
+  go(S.view[n]);
+}
+function nextTodo() {
+  const order = [...S.rows.keys()];
+  const start = S.cur;
+  for (let k = 1; k <= order.length; k++) {
+    const i = (start + k) % order.length;
+    if (!S.review[S.rows[i].excelRow]?.s) {
+      if (!S.view.includes(i)) { S.filter = "all"; S.q = ""; $("#q").value = ""; applyFilter(); }
+      return go(i);
+    }
+  }
+  toast("미검수 행이 없습니다. 모두 검수했습니다");
+}
+function judge(s) {
+  if (!S.rows.length) return;
+  const row = S.rows[S.cur], r = rv(row);
+  r.s = r.s === s ? "" : s;
+  saveReview();
+  const before = S.view.indexOf(S.cur);
+  applyFilter();
+  if (r.s && $("#autoNext").checked) {
+    // 필터 때문에 현재 행이 빠졌으면 같은 위치의 행, 아니면 다음 행
+    const p = S.view.indexOf(S.cur);
+    if (p >= 0 && p < S.view.length - 1) S.cur = S.view[p + 1];
+    else if (p < 0 && S.view.length) S.cur = S.view[Math.min(before, S.view.length - 1)];
+    else if (p === S.view.length - 1) toast("마지막 행까지 판정했습니다");
+    render(); $("#main").scrollTop = 0;
+  } else render();
+}
+document.querySelectorAll(".judge button").forEach(b => b.addEventListener("click", () => judge(b.dataset.s)));
+$("#memo").addEventListener("input", e => {
+  if (!S.rows.length) return;
+  rv(S.rows[S.cur]).memo = e.target.value; saveReview();
+});
+$("#view").addEventListener("click", e => {
+  const z = e.target.closest("[data-zoom]");
+  if (z) { e.stopPropagation(); return zoom(z.dataset.zoom); }
+  if (e.target.closest("a")) return;
+  const f = e.target.closest(".field"); if (!f) return;
+  const c = +f.dataset.c, r = rv(S.rows[S.cur]);
+  r.marks = r.marks.includes(c) ? r.marks.filter(x => x !== c) : [...r.marks, c].sort((a, b) => a - b);
+  saveReview();
+  f.classList.toggle("marked", r.marks.includes(c));
+  renderSide();
+});
+$("#marks").addEventListener("click", e => {
+  const b = e.target.closest("[data-unmark]"); if (!b) return;
+  const r = rv(S.rows[S.cur]), c = +b.dataset.unmark;
+  r.marks = r.marks.filter(x => x !== c); saveReview(); render();
+});
+function zoom(url) { const lb = $("#lightbox"); lb.querySelector("img").src = url; lb.classList.add("on"); }
+$("#lightbox").addEventListener("click", () => $("#lightbox").classList.remove("on"));
+
+document.addEventListener("keydown", e => {
+  if ($("#dlg").open) return;
+  if (e.key === "Escape") { $("#lightbox").classList.remove("on"); document.activeElement?.blur(); return; }
+  if (e.target.matches("input,textarea,select") || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!S.rows.length) return;
+  const k = e.key;
+  if (k === "ArrowRight") step(1);
+  else if (k === "ArrowLeft") step(-1);
+  else if (k === "1") judge("ok");
+  else if (k === "2") judge("issue");
+  else if (k === "3") judge("hold");
+  else if (k === "0") { rv(S.rows[S.cur]).s = ""; saveReview(); applyFilter(); render(); }
+  else if (k === "n" || k === "N") nextTodo();
+  else if (k === "m" || k === "M") { e.preventDefault(); $("#memo").focus(); }
+  else if (k === "/") { e.preventDefault(); $("#q").focus(); }
+  else return;
+});
+
+/* ---------- 설정 다이얼로그 ---------- */
+$("#btnSettings").addEventListener("click", () => { buildSettings(); $("#dlg").showModal(); });
+$("#dlg").addEventListener("click", e => { if (e.target.closest("[data-close]")) $("#dlg").close(); });
+$("#dlg").addEventListener("close", () => { saveConfig(); revalidate(); render(); });
+$("#btnReset").addEventListener("click", () => {
+  S.map = autoMap(); S.rules = {...DEFAULT_RULES}; S.required = [S.map.code, S.map.name].filter(i => i >= 0);
+  buildSettings();
+});
+function buildSettings() {
+  const opts = sel => `<option value="-1">(사용 안 함)</option>` + S.headers.map((h, c) => `<option value="${c}" ${c === sel ? "selected" : ""}>${esc(h)} (${XLSX.utils.encode_col(S.startCol + c)})</option>`).join("");
+  $("#mapGrid").innerHTML = ROLES.map(r => `<label>${r.label}<select data-role="${r.key}">${opts(S.map[r.key])}</select></label>`).join("");
+  $("#rulesBox").innerHTML = RULE_DEFS.map(([k, label, params]) => `<label><input type="checkbox" data-rule="${k}" ${S.rules[k] ? "checked" : ""}> ${label}
+    ${(params || []).map(([p, pl]) => `<span class="hint">${pl}</span><input type="number" data-param="${p}" value="${S.rules[p]}" step="any">`).join("")}</label>`).join("");
+  $("#reqBox").innerHTML = S.headers.map((h, c) => `<label><input type="checkbox" data-req="${c}" ${S.required.includes(c) ? "checked" : ""}>${esc(h)}</label>`).join("");
+}
+$("#dlg").addEventListener("change", e => {
+  const t = e.target;
+  if (t.dataset.role) S.map[t.dataset.role] = +t.value;
+  else if (t.dataset.rule) S.rules[t.dataset.rule] = t.checked;
+  else if (t.dataset.param) { const v = parseFloat(t.value); if (Number.isFinite(v)) S.rules[t.dataset.param] = v; }
+  else if (t.dataset.req) { const c = +t.dataset.req; S.required = t.checked ? [...new Set([...S.required, c])] : S.required.filter(x => x !== c); }
+});
+
+/* ---------- 내보내기 ---------- */
+$("#btnExport").addEventListener("click", () => {
+  const head = ["원본행", ...S.headers, "검수상태", "자동검증", "자동검증 상세", "표시한 항목", "검수 메모"];
+  const LV = {err:"오류", warn:"경고", none:"통과"};
+  const aoa = [head, ...S.rows.map((row, i) => {
+    const r = S.review[row.excelRow] || {}, ck = S.checks[i];
+    return [row.excelRow, ...S.headers.map((_, c) => row.raw[c] ?? ""),
+      STATUS[r.s] || "미검수", LV[ck.level], ck.issues.map(x => x.msg).join("\n"),
+      (r.marks || []).map(c => S.headers[c]).join(", "), r.memo || ""];
+  })];
+  const ws = XLSX.utils.aoa_to_sheet(aoa, {cellDates:true});
+  ws["!cols"] = head.map((h, k) => ({wch: k === head.length - 3 ? 50 : k === head.length - 1 ? 40 : Math.min(30, Math.max(8, String(h).length * 2))}));
+  ws["!autofilter"] = {ref: XLSX.utils.encode_range({s:{r:0, c:0}, e:{r:aoa.length - 1, c:head.length - 1}})};
+  const c = counts();
+  const sum = XLSX.utils.aoa_to_sheet([
+    ["원본 파일", S.file.name], ["시트", S.sheet], ["내보낸 시각", new Date().toLocaleString("ko-KR")],
+    ["전체 행", c.all], ["정상", c.ok], ["이슈", c.issue], ["보류", c.hold], ["미검수", c.todo], ["자동검증 경고/오류 행", c.auto],
+  ]);
+  sum["!cols"] = [{wch:22}, {wch:40}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "검수결과");
+  XLSX.utils.book_append_sheet(wb, sum, "요약");
+  XLSX.writeFile(wb, S.file.name.replace(/\.[^.]+$/, "") + "_검수결과.xlsx");
+});
+
+let toastT;
+function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("on"), 1800); }
+</script>
+</body>
+</html>
