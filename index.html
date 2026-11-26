@@ -159,6 +159,10 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:8px 16px;border-radius:8px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:60}
 .toast.on{opacity:1}
 .hidden{display:none!important}
+.samplebar{background:var(--accent-weak);border:1px solid var(--accent);border-radius:12px;padding:12px 14px;margin-bottom:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.samplebar b{color:var(--accent)}
+.samplebar ol{margin:0;padding-left:18px;flex:1;min-width:260px;font-size:13px}
+.samplebar .acts{display:flex;gap:6px;flex-wrap:wrap}
 
 @media (max-width:1100px){
   .layout{grid-template-columns:220px minmax(0,1fr);height:auto}
@@ -202,6 +206,18 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
       <p>또는 상단의 <b>엑셀 열기</b>를 누르세요. (.xlsx / .xls / .csv, 파일 1개)</p>
       <p>첫 행을 헤더로 읽고, 2행부터 한 행씩 검수합니다.</p>
       <p>파일은 이 브라우저 안에서만 읽으며 어디로도 전송되지 않습니다.</p>
+    </div>
+    <div id="sampleBar" class="samplebar hidden">
+      <div style="flex-basis:100%"><b>샘플 데이터로 체험 중</b> · 더미 상품 30행이며, 일부러 넣은 가격·필수값·이미지 오류가 섞여 있습니다.</div>
+      <ol>
+        <li><b>왼쪽 목록</b>에서 행을 고르세요. 빨강·주황 점은 자동 검증에 걸린 행입니다.</li>
+        <li><b>가운데</b>에서 오류 사유, 이미지, 가격, 전체 값을 확인하세요. 문제 있는 값은 클릭해 '표시'합니다.</li>
+        <li><b>오른쪽</b>에서 정상·이슈·보류(<kbd>1</kbd><kbd>2</kbd><kbd>3</kbd>)로 판정하고 메모를 남긴 뒤, 상단 <b>검수 결과 내보내기</b>로 엑셀을 받으세요.</li>
+      </ol>
+      <div class="acts">
+        <label class="btn primary" for="file">내 엑셀 열기</label>
+        <a class="btn" href="sample_products.xlsx" download style="text-decoration:none">샘플 엑셀 받기</a>
+      </div>
     </div>
     <div id="view" class="hidden"></div>
   </main>
@@ -293,7 +309,17 @@ const drop = $("#drop");
 ["dragleave","drop"].forEach(t => document.addEventListener(t, e => { e.preventDefault(); if (t === "drop" || e.target === drop) drop.classList.remove("over"); }));
 document.addEventListener("drop", e => { const f = e.dataTransfer?.files?.[0]; if (f) loadFile(f); });
 
-async function loadFile(file) {
+async function loadSample() {
+  if (location.protocol === "file:") return;  // 로컬 파일로 열면 fetch가 막히므로 빈 화면에서 시작
+  try {
+    const res = await fetch("sample_products.xlsx", {cache: "no-cache"});
+    if (!res.ok) return;
+    const file = new File([await res.blob()], "sample_products.xlsx");
+    await loadFile(file, true);
+  } catch { /* 로컬 파일로 열었을 때 등: 빈 화면 유지 */ }
+}
+
+async function loadFile(file, isSample = false) {
   if (typeof XLSX === "undefined") { alert("엑셀 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인하세요."); return; }
   try {
     const buf = await file.arrayBuffer();
@@ -303,11 +329,14 @@ async function loadFile(file) {
     if (/\.(xlsx|xlsm)$/i.test(file.name) && typeof JSZip !== "undefined") {
       try { S.imgs = await extractImages(buf); } catch (err) { console.warn("이미지 추출 실패", err); }
     }
-    $("#fname").textContent = file.name; $("#fname").title = file.name;
+    S.isSample = isSample;
+    $("#sampleBar").classList.toggle("hidden", !isSample);
+    $("#fname").textContent = file.name + (isSample ? " (샘플)" : ""); $("#fname").title = file.name;
     const sel = $("#sheet");
     sel.innerHTML = wb.SheetNames.map(n => `<option>${esc(n)}</option>`).join("");
     sel.classList.toggle("hidden", wb.SheetNames.length < 2);
     selectSheet(wb.SheetNames[0]);
+    if (isSample) { const k = S.checks.findIndex(c => c.level === "err"); if (k >= 0) go(k); }
   } catch (err) {
     console.error(err); alert("파일을 읽지 못했습니다: " + err.message);
   }
@@ -820,6 +849,8 @@ $("#btnExport").addEventListener("click", () => {
   XLSX.utils.book_append_sheet(wb, sum, "요약");
   XLSX.writeFile(wb, S.file.name.replace(/\.[^.]+$/, "") + "_검수결과.xlsx");
 });
+
+loadSample();
 
 let toastT;
 function toast(m) { const t = $("#toast"); t.textContent = m; t.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("on"), 1800); }
